@@ -1,50 +1,142 @@
-from google import genai
 from pydantic import BaseModel
-import os
-import requests
-from google.genai import types
-from dotenv import load_dotenv
+from typing import List, Optional, Union
+from tools.llm_client import get_client
 
-# Load environment variables
-load_dotenv()
 
-class Summary(BaseModel):
-    doc_: str
+class SummaryModel(BaseModel):
+    title: Optional[str] = None
     summary: str
-    charts_: list[str]
+    key_points: List[str] = []
+    recommended_charts: List[str] = []
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
-doc_url = "https://jfhprwwvcftxglhvbeol.supabase.co/storage/v1/object/sign/uploads/Sample%20Business%20Report.pdf?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV9mYTZkYzFiZC00N2Q0LTRiMzItODQ2MS1jMGQ0NDlhOTA5ZGUiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJ1cGxvYWRzL1NhbXBsZSBCdXNpbmVzcyBSZXBvcnQucGRmIiwiaWF0IjoxNzU2NzkwOTc1LCJleHAiOjE3NTczOTU3NzV9.Bcpqe2TGn2Eadn7GBU8oB2JtGhcZIdo7zjpeMOcq1MQ"
-# Download the PDF data
-response_pdf = requests.get(doc_url)
-doc_data = response_pdf.content
 
-prompt = '''You are an expert in Financial Analysis and have good experience in converting data into understandable visuals.
-Your task is to analyze the provided document and generate a concise summary along with any relevant charts or visualizations.
-Also, please recommend any charts that would make the data more comprehensible.
+class SummaryService:
+    MODEL_NAME = "gemini-2.5-pro"
 
-No need for descriptions for the charts, just name the charts and what they represent with x-axis,y-axis labels.
-'''
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents=[
-        types.Part.from_bytes(
-            data=doc_data,
-            mime_type='application/pdf',
-        ),
-        prompt
-    ],
-    config={
-        "response_mime_type": "application/json",
-        "response_schema": Summary
-    }
-)
+    def __init__(self):
+        self.client = get_client()
 
-summary_: Summary = response.parsed 
+    def _make_contents(self, input_data: Union[str, bytes], mime_type: Optional[str] = None):
+        system = (
+            "You are an expert summarizer. Produce a short title, a concise summary paragraph, "
+            "a list of key points and a list of recommended chart names with axes. Return JSON."
+        )
 
-# Access the parsed summary fields
-print(f"Document: {summary_.doc_}\n")
-print(f"Summary: {summary_.summary}\n")
-print(f"Charts: {summary_.charts_}")
+        if isinstance(input_data, bytes):
+            from google.genai import types
+
+            part = types.Part.from_bytes(data=input_data, mime_type=mime_type or "application/pdf")
+            return [system, part]
+
+        return [system, input_data]
+
+    def generate_summary(self, input_data: Union[str, bytes], max_key_points: int = 5, mime_type: Optional[str] = None) -> SummaryModel:
+        contents = self._make_contents(input_data, mime_type=mime_type)
+
+        from tools.llm_client import generate_content
+
+        response = generate_content(
+            model=self.MODEL_NAME, contents=contents, config={"response_mime_type": "application/json"}
+        )
+
+        parsed = getattr(response, "parsed", None)
+        if parsed:
+            data = parsed
+        else:
+            import json
+
+            try:
+                data = json.loads(getattr(response, "text", ""))
+            except Exception:
+                txt = getattr(response, "text", str(response))
+                return SummaryModel(summary=txt, key_points=[txt[:200]])
+
+        title = data.get("title") if isinstance(data, dict) else None
+        summary = data.get("summary") if isinstance(data, dict) else str(data)
+        key_points = data.get("key_points", []) if isinstance(data, dict) else []
+        recommended_charts = data.get("recommended_charts", []) if isinstance(data, dict) else []
+
+        # Normalize chart entries: allow either strings or dicts; convert dicts to readable strings
+        normalized_charts: list[str] = []
+        for entry in recommended_charts:
+            if isinstance(entry, str):
+                normalized_charts.append(entry)
+            from pydantic import BaseModel
+            from typing import List, Optional, Union
+            from tools.llm_client import get_client
+
+
+            class SummaryModel(BaseModel):
+                title: Optional[str] = None
+                summary: str
+                key_points: List[str] = []
+                recommended_charts: List[str] = []
+
+
+            class SummaryService:
+                MODEL_NAME = "gemini-2.5-pro"
+
+                def __init__(self):
+                    self.client = get_client()
+
+                def _make_contents(self, input_data: Union[str, bytes], mime_type: Optional[str] = None):
+                    system = (
+                        "You are an expert summarizer. Produce a short title, a concise summary paragraph, "
+                        "a list of key points and a list of recommended chart names with axes. Return JSON."
+                    )
+
+                    if isinstance(input_data, bytes):
+                        from google.genai import types
+
+                        part = types.Part.from_bytes(data=input_data, mime_type=mime_type or "application/pdf")
+                        return [system, part]
+
+                    return [system, input_data]
+
+                def generate_summary(self, input_data: Union[str, bytes], max_key_points: int = 5, mime_type: Optional[str] = None) -> SummaryModel:
+                    contents = self._make_contents(input_data, mime_type=mime_type)
+
+                    from tools.llm_client import generate_content
+
+                    response = generate_content(
+                        model=self.MODEL_NAME, contents=contents, config={"response_mime_type": "application/json"}
+                    )
+
+                    parsed = getattr(response, "parsed", None)
+                    if parsed:
+                        data = parsed
+                    else:
+                        import json
+
+                        try:
+                            data = json.loads(getattr(response, "text", ""))
+                        except Exception:
+                            txt = getattr(response, "text", str(response))
+                            return SummaryModel(summary=txt, key_points=[txt[:200]])
+
+                    title = data.get("title") if isinstance(data, dict) else None
+                    summary = data.get("summary") if isinstance(data, dict) else str(data)
+                    key_points = data.get("key_points", []) if isinstance(data, dict) else []
+                    recommended_charts = data.get("recommended_charts", []) if isinstance(data, dict) else []
+
+                    # Normalize chart entries: allow either strings or dicts; convert dicts to readable strings
+                    normalized_charts: list[str] = []
+                    for entry in recommended_charts:
+                        if isinstance(entry, str):
+                            normalized_charts.append(entry)
+                        elif isinstance(entry, dict):
+                            # Attempt to build a concise chart description
+                            name = entry.get("chart_name") or entry.get("chart_type") or "chart"
+                            x = entry.get("x_axis") or entry.get("x") or "x"
+                            y = entry.get("y_axis") or entry.get("y") or "y"
+                            normalized_charts.append(f"{name} (x: {x}, y: {y})")
+                        else:
+                            normalized_charts.append(str(entry))
+
+                    if isinstance(key_points, str):
+                        key_points = [kp.strip() for kp in key_points.splitlines() if kp.strip()][:max_key_points]
+
+                    return SummaryModel(title=title, summary=summary, key_points=key_points[:max_key_points], recommended_charts=normalized_charts)
+
+
 

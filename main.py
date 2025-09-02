@@ -1,15 +1,27 @@
-from google import genai
-from dotenv import load_dotenv
-import os
+import argparse
+from structuredOutput.orchestrator import Orchestrator
 
-load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+def main():
+    parser = argparse.ArgumentParser(description="Run intelligence layer analysis on a file URL or raw text.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--file-url", help="HTTP(S) URL of a file to analyze (e.g., PDF)")
+    group.add_argument("--text", help="Raw text to analyze")
+    parser.add_argument("--mime", help="Optional MIME type for file (e.g., application/pdf)")
+    args = parser.parse_args()
 
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents="Explain how AI works in a few words",
-)
+    orch = Orchestrator()
+    try:
+        results = orch.analyze(file_url=args.file_url, text=args.text, mime_type=args.mime)
+    except Exception as e:
+        print("Error during analysis:", str(e))
+        return
 
-print(response.text)
+    # Print results simply; these are Pydantic models or dicts
+    for k, v in results.items():
+        print(f"--- {k.upper()} ---")
+        print(v)
+
+
+if __name__ == "__main__":
+    main()
