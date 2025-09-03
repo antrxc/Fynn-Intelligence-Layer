@@ -12,7 +12,7 @@ class ChartSpec(BaseModel):
 
 
 class VisualsService:
-	MODEL_NAME = "gemini-2.5-pro"
+	MODEL_NAME = "gemini-2.5-flash"
 
 	def __init__(self):
 		self.client = get_client()

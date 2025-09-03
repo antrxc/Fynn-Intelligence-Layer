@@ -13,7 +13,7 @@ class RecommendationService:
     The input may be a str (plain text) or bytes (file content, e.g., PDF).
     """
 
-    MODEL_NAME = "gemini-2.5-pro"
+    MODEL_NAME = "gemini-2.5-flash"
 
     def __init__(self):
         self.client = get_client()
