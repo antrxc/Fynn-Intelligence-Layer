@@ -1,0 +1,612 @@
+#!/usr/bin/env python3
+"""
+Fast Intelligence Layer with Advanced Insights - Main Script
+
+Provides deep procurement insights with fast processing:
+- Basic mode: Completes in under 5 seconds using local processing
+- Advanced mode: Completes in under 30 seconds by calling LLM APIs efficiently
+"""
+
+import argparse
+import json
+import time
+import os
+import hashlib
+import requests
+from structuredOutput.fast_orchestrator import FastIntelligenceOrchestrator
+from tools.fast_llm_client import get_client, generate_content, analyze_csv_locally
+
+def download_file(url: str) -> bytes:
+    """Download file from URL."""
+    response = requests.get(url, timeout=60)
+    response.raise_for_status()
+    return response.content
+
+def generate_advanced_insights(csv_data):
+    """Generate more comprehensive insights based on CSV data analysis."""
+    # Analyze locally first to understand structure
+    local_analysis = analyze_csv_locally(csv_data)
+    if local_analysis.get('error'):
+        return None
+        
+    # Format data for the LLM
+    headers = local_analysis.get('headers', [])
+    numeric_cols = local_analysis.get('numeric_columns', {})
+    categorical_cols = local_analysis.get('categorical_columns', {})
+    
+    # Check if we have enough data to calculate procurement metrics
+    # We'll directly calculate procurement metrics ourselves instead of relying on LLM
+    procurement_summary = {}
+    
+    # Try to detect key procurement columns
+    amount_col = None
+    supplier_col = None
+    category_col = None
+    date_col = None
+    unit_price_col = None
+    quantity_col = None
+    
+    # Detect column types based on names
+    for col in headers:
+        col_lower = col.lower()
+        # Look for amount/cost columns
+        if any(term in col_lower for term in ['amount', 'cost', 'spend', 'price', 'value', 'total']):
+            if amount_col is None or 'total' in col_lower:  # Prefer columns with "total" in the name
+                amount_col = col
+        
+        # Look for supplier columns
+        if any(term in col_lower for term in ['supplier', 'vendor', 'contractor', 'company', 'business']):
+            supplier_col = col
+            
+        # Look for category columns
+        if any(term in col_lower for term in ['category', 'type', 'group', 'item', 'product']):
+            category_col = col
+            
+        # Look for date columns
+        if any(term in col_lower for term in ['date', 'year', 'month', 'period']):
+            date_col = col
+            
+        # Look for unit price columns
+        if any(term == col_lower or term in col_lower.split('_') for term in ['unit price', 'unitprice', 'price per']):
+            unit_price_col = col
+            
+        # Look for quantity columns
+        if any(term in col_lower for term in ['quantity', 'qty', 'units', 'volume']):
+            quantity_col = col
+    
+    # Calculate spend metrics if we have the necessary columns
+    # We need at least an amount column or both unit price and quantity
+    has_amount_data = False
+    
+    # If we have sample rows, try to calculate real metrics
+    if local_analysis.get('sample_rows'):
+        try:
+            import csv
+            from io import StringIO
+            from collections import defaultdict
+            
+            # Parse the CSV
+            csv_reader = csv.reader(StringIO(csv_data))
+            header_row = next(csv_reader)
+            
+            # Find column indices
+            amount_idx = None
+            supplier_idx = None
+            category_idx = None
+            date_idx = None
+            unit_price_idx = None
+            quantity_idx = None
+            
+            for i, col in enumerate(header_row):
+                col_lower = col.lower()
+                if amount_col and col == amount_col:
+                    amount_idx = i
+                if supplier_col and col == supplier_col:
+                    supplier_idx = i
+                if category_col and col == category_col:
+                    category_idx = i
+                if date_col and col == date_col:
+                    date_idx = i
+                if unit_price_col and col == unit_price_col:
+                    unit_price_idx = i
+                if quantity_col and col == quantity_col:
+                    quantity_idx = i
+            
+            # Calculate metrics based on available columns
+            total_spend = 0
+            spend_by_supplier = defaultdict(float)
+            spend_by_category = defaultdict(float)
+            
+            for row in csv_reader:
+                try:
+                    # Calculate amount
+                    amount = 0
+                    if amount_idx is not None:
+                        amount_str = row[amount_idx].replace('$', '').replace(',', '').strip()
+                        if amount_str:
+                            try:
+                                amount = float(amount_str)
+                                has_amount_data = True
+                            except ValueError:
+                                pass
+                    elif unit_price_idx is not None and quantity_idx is not None:
+                        try:
+                            price = float(row[unit_price_idx].replace('$', '').replace(',', '').strip())
+                            qty = float(row[quantity_idx].replace(',', '').strip())
+                            amount = price * qty
+                            has_amount_data = True
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    # Only proceed if we have a valid amount
+                    if amount > 0:
+                        total_spend += amount
+                        
+                        # Add to supplier spend
+                        if supplier_idx is not None and len(row) > supplier_idx:
+                            supplier = row[supplier_idx].strip()
+                            if supplier:
+                                spend_by_supplier[supplier] += amount
+                        
+                        # Add to category spend
+                        if category_idx is not None and len(row) > category_idx:
+                            category = row[category_idx].strip()
+                            if category:
+                                spend_by_category[category] += amount
+                except (IndexError, ValueError):
+                    continue
+            
+            # Create the procurement summary
+            if has_amount_data:
+                procurement_summary["total_spend"] = round(total_spend, 2)
+                
+                if spend_by_category:
+                    procurement_summary["spend_by_category"] = {k: round(v, 2) for k, v in 
+                                                              sorted(spend_by_category.items(), 
+                                                                    key=lambda x: x[1], reverse=True)[:5]}
+                
+                if spend_by_supplier:
+                    procurement_summary["spend_by_supplier"] = {k: round(v, 2) for k, v in 
+                                                              sorted(spend_by_supplier.items(), 
+                                                                    key=lambda x: x[1], reverse=True)[:5]}
+        except Exception as e:
+            print(f"Error calculating procurement metrics: {str(e)}")
+    
+    # Prepare a data summary for the LLM to reduce tokens needed
+    data_summary = {
+        "columns": headers,
+        "row_count": local_analysis.get('row_count', 0),
+        "numeric_columns": {},
+        "categorical_columns": {}
+    }
+    
+    # Add summary statistics for numeric columns
+    for col, stats in numeric_cols.items():
+        data_summary["numeric_columns"][col] = {
+            "min": stats.get('min', 0),
+            "max": stats.get('max', 0),
+            "mean": stats.get('mean', 0)
+        }
+    
+    # Add distribution for categorical columns
+    for col, stats in categorical_cols.items():
+        if stats.get('most_common'):
+            data_summary["categorical_columns"][col] = {
+                "unique_values": stats.get('unique_values', 0),
+                "top_values": [item[0] for item in stats.get('most_common', [])]
+            }
+    
+    # Sample a few rows to give the model context
+    sample_rows = []
+    if local_analysis.get('sample_rows'):
+        sample_rows = local_analysis.get('sample_rows')[:3]
+    
+    # Create a prompt for the model with our pre-analyzed data and calculated metrics
+    procurement_summary_json = json.dumps(procurement_summary, indent=2) if procurement_summary else "No procurement metrics could be calculated directly."
+    
+    prompt = f"""
+You are a Procurement Data Analyst expert. Based on the CSV data summary below, provide deep procurement analytics insights.
+
+DATA SUMMARY:
+- Row count: {data_summary['row_count']}
+- Columns: {', '.join(data_summary['columns'])}
+- Sample rows: {sample_rows}
+
+CALCULATED PROCUREMENT METRICS:
+{procurement_summary_json}
+
+NUMERIC COLUMNS:
+{json.dumps(data_summary['numeric_columns'], indent=2)}
+
+CATEGORICAL COLUMNS:
+{json.dumps(data_summary['categorical_columns'], indent=2)}
+
+Generate a JSON response with the following structure:
+{{
+  "procurement_summary": {{
+    "total_spend": [calculated total spend],
+    "spend_by_category": {{...}},
+    "spend_by_supplier": {{...}},
+    "supplier_performance": {{...}},
+    "supplier_concentration": [...]
+  }},
+  "actionable_insights": [
+    {{
+      "area": [area of focus],
+      "insight": [specific insight],
+      "recommendation": [actionable recommendation],
+      "target_metric": [metric to improve],
+      "target_value": [target improvement]
+    }}
+  ],
+  "visualizations": [
+    {{
+      "chart_name": [name],
+      "procurement_optimization_purpose": [why this helps procurement],
+      "chart_type": [e.g., "Bar Chart", "Pie Chart"],
+      "x_axis": [column name],
+      "y_axis": [what this measures],
+      "data_source": [where data comes from]
+    }}
+  ]
+}}
+
+IMPORTANT: Use the CALCULATED PROCUREMENT METRICS if available to populate the procurement_summary section. If not available, analyze the data to generate insights.
+Focus on practical procurement insights like cost savings opportunities, supplier performance issues, and maverick spending patterns.
+Limit to 3-5 actionable insights and 3-5 visualization recommendations.
+"""
+    
+    # Get insights from the model (using a smaller/faster model)
+    try:
+        # Generate a unique cache key based on the CSV content
+        cache_key = f"procurement_insights_{hashlib.md5(csv_data.encode()).hexdigest()}"
+        
+        response = generate_content(
+            model="gemini-1.5-flash",  # Use the faster model for speed
+            contents=[prompt],
+            config={"response_mime_type": "application/json"},
+            use_cache=True,  # Enable caching for faster subsequent runs
+            cache_key=cache_key  # Use file-specific cache key
+        )
+        
+        # Parse the response
+        if hasattr(response, "parsed"):
+            return response.parsed
+        elif hasattr(response, "text"):
+            try:
+                return json.loads(response.text)
+            except:
+                return {"error": "Failed to parse response", "text": response.text[:1000]}
+        else:
+            return {"error": "No response from model"}
+    except Exception as e:
+        return {"error": str(e)}
+
+def main():
+    parser = argparse.ArgumentParser(description="Run fast intelligence layer with advanced insights.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--file-url", help="HTTP(S) URL of a file to analyze (e.g., CSV)")
+    group.add_argument("--text", help="Raw text to analyze")
+    parser.add_argument("--mime", help="Optional MIME type for file (e.g., text/csv)")
+    parser.add_argument("--output", choices=["pretty", "json"], default="pretty", 
+                        help="Output format (pretty or json)")
+    parser.add_argument("--no-cache", action="store_true", help="Disable cache for fresh results")
+    parser.add_argument("--advanced", action="store_true", help="Generate advanced insights (takes longer)")
+    args = parser.parse_args()
+
+    start_time = time.time()
+    print(f"⏳ Starting analysis...")
+    
+    orch = FastIntelligenceOrchestrator()
+    
+    try:
+        # Fetch and analyze the content
+        if args.file_url:
+            # Just download the file directly - we'll do our own analysis
+            try:
+                content = download_file(args.file_url)
+                mime_type = args.mime or 'text/csv'
+            except Exception as e:
+                print(f"Error downloading file: {str(e)}")
+                return
+        else:
+            content = args.text
+            mime_type = args.mime or 'text/plain'
+            
+        # Check if we have valid content
+        if not content:
+            print("❌ No content found to analyze")
+            return
+            
+        # Print some basic info about what we're analyzing
+        if args.file_url:
+            print(f"📄 Analyzing file: {args.file_url}")
+        print(f"📊 Content type: {mime_type}")
+        
+        # Check if this is a CSV file
+        if mime_type and ('csv' in mime_type or 'text/plain' in mime_type):
+            print(f"🔍 Analyzing CSV data...")
+            
+            # Do quick stats generation on the CSV data
+            stats = analyze_csv_locally(content if isinstance(content, str) else content.decode('utf-8'))
+            
+            if stats.get('error'):
+                print(f"❌ Error analyzing CSV: {stats['error']}")
+            else:
+                # Print basic stats
+                print(f"📊 Found {stats['row_count']} rows and {len(stats['headers'])} columns")
+                print(f"📋 Headers: {', '.join(stats['headers'][:5])}{'...' if len(stats['headers']) > 5 else ''}")
+                
+                # If advanced insights are requested, generate them
+                if args.advanced:
+                    print(f"⏳ Generating advanced procurement insights...")
+                    advanced_start = time.time()
+                    
+                    # Extract content as string
+                    if isinstance(content, bytes):
+                        try:
+                            content_str = content.decode('utf-8')
+                        except UnicodeDecodeError:
+                            content_str = content.decode('latin-1', errors='replace')
+                    else:
+                        content_str = content
+                        
+                    # Calculate file-specific hash for caching
+                    file_id = hashlib.md5(content_str.encode()).hexdigest()
+                    cache_path = os.path.join(os.path.dirname(__file__), '.cache', f'insights_{file_id}.json')
+                    
+                    # First check if we have file-specific cached insights
+                    if not args.no_cache and os.path.exists(cache_path):
+                        print(f"📄 Using file-specific cached insights")
+                        try:
+                            with open(cache_path, 'r') as f:
+                                advanced_insights = json.load(f)
+                        except Exception as e:
+                            print(f"⚠️ Failed to load cached insights: {str(e)}")
+                            # Fall through to generate new insights
+                            advanced_insights = None
+                    else:
+                        # Generate new insights
+                        print(f"🔄 Generating new insights for this specific file")
+                        advanced_insights = generate_advanced_insights(content_str)
+                    
+                    # Check if we got a valid response with our calculated procurement data
+                    if advanced_insights and isinstance(advanced_insights, dict) and "procurement_summary" in advanced_insights:
+                        # We have valid data, use it
+                        print(f"✅ Successfully generated custom procurement insights for this dataset")
+                        
+                        # Cache this result for future use with this file
+                        try:
+                            os.makedirs(os.path.join(os.path.dirname(__file__), '.cache'), exist_ok=True)
+                            with open(cache_path, 'w') as f:
+                                json.dump(advanced_insights, f, indent=2)
+                        except Exception as e:
+                            print(f"Note: Could not cache insights: {str(e)}")
+                    else:
+                        print(f"⚠️ Could not generate advanced insights from model")
+                        
+                        # We don't need to check cache here as we already did that earlier
+                        # This is the fallback path for when generation fails
+                        print(f"🔄 Falling back to generating insights from local calculations")
+                        
+                        # Start with our local calculations
+                        procurement_summary = {}
+                        
+                        # Calculate metrics directly
+                        try:
+                            import csv
+                            from io import StringIO
+                            from collections import defaultdict
+                            
+                            # Parse the CSV again
+                            csv_reader = csv.reader(StringIO(content_str))
+                            headers = next(csv_reader)
+                            
+                            # Detect important columns
+                            amount_col = None
+                            supplier_col = None
+                            category_col = None
+                            
+                            # Find key column indices
+                            for i, col in enumerate(headers):
+                                col_lower = col.lower()
+                                if any(term in col_lower for term in ['amount', 'cost', 'spend', 'value', 'total']):
+                                    amount_col = i
+                                if any(term in col_lower for term in ['supplier', 'vendor', 'company']):
+                                    supplier_col = i
+                                if any(term in col_lower for term in ['category', 'type', 'group']):
+                                    category_col = i
+                            
+                            # Calculate basic metrics
+                            total_spend = 0
+                            spend_by_supplier = defaultdict(float)
+                            spend_by_category = defaultdict(float)
+                            
+                            # Process rows
+                            for row in csv_reader:
+                                try:
+                                    if amount_col is not None and len(row) > amount_col:
+                                        amount_str = row[amount_col].replace('$', '').replace(',', '').strip()
+                                        if amount_str:
+                                            try:
+                                                amount = float(amount_str)
+                                                total_spend += amount
+                                                
+                                                if supplier_col is not None and len(row) > supplier_col:
+                                                    supplier = row[supplier_col].strip()
+                                                    if supplier:
+                                                        spend_by_supplier[supplier] += amount
+                                                
+                                                if category_col is not None and len(row) > category_col:
+                                                    category = row[category_col].strip()
+                                                    if category:
+                                                        spend_by_category[category] += amount
+                                            except ValueError:
+                                                pass
+                                except (IndexError, ValueError):
+                                    continue
+                                    
+                            # Create procurement summary
+                            procurement_summary["total_spend"] = round(total_spend, 2)
+                            
+                            if spend_by_category:
+                                procurement_summary["spend_by_category"] = {k: round(v, 2) for k, v in 
+                                                                          sorted(spend_by_category.items(), 
+                                                                                key=lambda x: x[1], reverse=True)[:5]}
+                            
+                            if spend_by_supplier:
+                                procurement_summary["spend_by_supplier"] = {k: round(v, 2) for k, v in 
+                                                                          sorted(spend_by_supplier.items(), 
+                                                                                key=lambda x: x[1], reverse=True)[:5]}
+                        except Exception as e:
+                            print(f"Could not calculate metrics locally: {str(e)}")
+                        
+                        # Generate insights based on our calculations
+                        if procurement_summary.get("total_spend", 0) > 0:
+                            advanced_insights = {
+                                "procurement_summary": procurement_summary,
+                                "actionable_insights": [
+                                    {
+                                        "area": "Spend Analysis",
+                                        "insight": f"Total spend identified: ${procurement_summary.get('total_spend', 0):,.2f}",
+                                        "recommendation": "Implement regular spend reviews to identify cost-saving opportunities",
+                                        "target_metric": "Cost Reduction",
+                                        "target_value": "5-10% annually"
+                                    }
+                                ],
+                                "visualizations": [
+                                    {
+                                        "chart_name": "Spend by Category",
+                                        "procurement_optimization_purpose": "Visualize spend distribution across categories",
+                                        "chart_type": "Pie Chart",
+                                        "x_axis": "Category",
+                                        "y_axis": "Spend Amount"
+                                    },
+                                    {
+                                        "chart_name": "Top Suppliers by Spend",
+                                        "procurement_optimization_purpose": "Identify strategic suppliers for negotiation",
+                                        "chart_type": "Bar Chart",
+                                        "x_axis": "Supplier",
+                                        "y_axis": "Spend Amount"
+                                    }
+                                ]
+                            }
+                            
+                            # Add supplier-specific insights if we have supplier data
+                            if procurement_summary.get("spend_by_supplier"):
+                                top_supplier = list(procurement_summary["spend_by_supplier"].items())[0]
+                                advanced_insights["actionable_insights"].append({
+                                    "area": "Supplier Management",
+                                    "insight": f"Top supplier {top_supplier[0]} accounts for ${top_supplier[1]:,.2f} in spend",
+                                    "recommendation": "Review contract terms and negotiate volume discounts",
+                                    "target_metric": "Savings from Top Supplier",
+                                    "target_value": "3-5%"
+                                })
+                            
+                            # Add category-specific insights if we have category data
+                            if procurement_summary.get("spend_by_category"):
+                                top_category = list(procurement_summary["spend_by_category"].items())[0]
+                                advanced_insights["actionable_insights"].append({
+                                    "area": "Category Management",
+                                    "insight": f"Highest spend category is {top_category[0]} at ${top_category[1]:,.2f}",
+                                    "recommendation": "Develop category-specific sourcing strategy",
+                                    "target_metric": "Category Cost Reduction",
+                                    "target_value": "7-12%"
+                                })
+                            
+                            # Cache these insights
+                            try:
+                                with open(cache_path, 'w') as f:
+                                    json.dump(advanced_insights, f, indent=2)
+                            except:
+                                pass
+                        else:
+                            # No procurement data could be calculated, use a generic template
+                            advanced_insights = {
+                                "procurement_summary": {
+                                    "note": "Could not calculate procurement metrics from this dataset"
+                                },
+                                "actionable_insights": [
+                                    {
+                                        "area": "Data Quality",
+                                        "insight": "The dataset format doesn't contain standard procurement fields that could be automatically analyzed",
+                                        "recommendation": "Consider reformatting data to include clear amount, supplier, and category fields",
+                                        "target_metric": "Data Completeness",
+                                        "target_value": "100%"
+                                    }
+                                ],
+                                "visualizations": [
+                                    {
+                                        "chart_name": "Data Structure Analysis",
+                                        "procurement_optimization_purpose": "Understand current data structure limitations",
+                                        "chart_type": "Text Report",
+                                        "note": "This dataset requires manual analysis or reformatting"
+                                    }
+                                ]
+                            }
+                    
+                    # Output the advanced insights
+                    if args.output == "json":
+                        print(json.dumps(advanced_insights, indent=2))
+                    else:
+                        # Pretty print procurement insights
+                        print("\n📊 PROCUREMENT INSIGHTS:")
+                        procurement_summary = advanced_insights.get("procurement_summary", {})
+                        
+                        if procurement_summary.get("note"):
+                            print(f"  ℹ️  {procurement_summary['note']}")
+                        else:
+                            if "total_spend" in procurement_summary:
+                                print(f"  💰 Total Spend: ${procurement_summary['total_spend']:,.2f}")
+                            
+                            if "spend_by_category" in procurement_summary:
+                                print("\n  🗂️  Top Categories by Spend:")
+                                for category, amount in procurement_summary["spend_by_category"].items():
+                                    print(f"     • {category}: ${amount:,.2f}")
+                                    
+                            if "spend_by_supplier" in procurement_summary:
+                                print("\n  🏢 Top Suppliers by Spend:")
+                                for supplier, amount in procurement_summary["spend_by_supplier"].items():
+                                    print(f"     • {supplier}: ${amount:,.2f}")
+                            
+                            if "supplier_concentration" in procurement_summary:
+                                print(f"\n  📈 Supplier Concentration: {procurement_summary['supplier_concentration']}")
+                        
+                        # Print actionable insights
+                        insights = advanced_insights.get("actionable_insights", [])
+                        if insights:
+                            print("\n💡 ACTIONABLE INSIGHTS:")
+                            for i, insight in enumerate(insights, 1):
+                                print(f"  {i}. {insight.get('area', 'Area')}: {insight.get('insight', '')}")
+                                if "recommendation" in insight:
+                                    print(f"     ➡️ {insight['recommendation']}")
+                                if "target_metric" in insight and "target_value" in insight:
+                                    print(f"     🎯 {insight['target_metric']}: {insight['target_value']}")
+                        
+                        # Print visualization recommendations
+                        visualizations = advanced_insights.get("visualizations", [])
+                        if visualizations:
+                            print("\n📈 VISUALIZATION RECOMMENDATIONS:")
+                            for i, viz in enumerate(visualizations, 1):
+                                print(f"  {i}. {viz.get('chart_name', f'Chart {i}')} ({viz.get('chart_type', 'Chart')})")
+                                if "procurement_optimization_purpose" in viz:
+                                    print(f"     🔍 Purpose: {viz['procurement_optimization_purpose']}")
+                                if viz.get("note"):
+                                    print(f"     ℹ️  Note: {viz['note']}")
+                    
+                    advanced_time = time.time() - advanced_start
+                    print(f"✅ Advanced insights generated in {advanced_time:.2f} seconds")
+            
+            total_time = time.time() - start_time
+            print(f"⏱️  Total processing time: {total_time:.2f} seconds")
+            
+        else:
+            print(f"❌ Unsupported file type: {mime_type}")
+            print(f"💡 Please provide a CSV file for procurement analysis")
+    
+    except Exception as e:
+        print(f"❌ Error during analysis: {str(e)}")
+        return
+
+if __name__ == "__main__":
+    main()

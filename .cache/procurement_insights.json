@@ -1,0 +1,65 @@
+{
+  "procurement_summary": {
+    "total_spend": 1782299.88,
+    "spend_by_category": {
+      "MRO": 509264.44,
+      "Electronics": 395995.8,
+      "Office Supplies": 393963.85,
+      "Raw Materials": 286576.88,
+      "Packaging": 196498.91
+    },
+    "spend_by_supplier": {
+      "Delta_Logistics": 509459.7,
+      "Beta_Supplies": 497676.01,
+      "Epsilon_Group": 357488.24,
+      "Alpha_Inc": 222105.79,
+      "Gamma_Co": 195570.14
+    }
+  },
+  "actionable_insights": [
+    {
+      "area": "Cost Savings",
+      "insight": "Average negotiation savings are 7.86%, indicating potential for more aggressive negotiation strategies.",
+      "recommendation": "Implement advanced negotiation training for procurement teams and explore competitive bidding for high-spend categories. Target a minimum 10% average savings rate.",
+      "target_metric": "Average Savings Percentage",
+      "target_value": "10.0%"
+    },
+    {
+      "area": "Spend by Category",
+      "insight": "'MRO' accounts for the highest spend at $509,264.44.",
+      "recommendation": "Conduct a deep-dive strategic sourcing initiative for the 'MRO' category to identify consolidation or alternative sourcing opportunities.",
+      "target_metric": "Spend Reduction for Top Category",
+      "target_value": "15%"
+    },
+    {
+      "area": "Quality Control",
+      "insight": "Overall defect rate is 7.5%, indicating significant quality issues.",
+      "recommendation": "Identify top suppliers contributing to high defect rates and work with them on root cause analysis and corrective actions.",
+      "target_metric": "Overall Defect Rate",
+      "target_value": "2.0%"
+    }
+  ],
+  "visualizations": [
+    {
+      "chart_name": "Spend Distribution by Category",
+      "procurement_optimization_purpose": "Visualize the proportion of total spend across different item categories to identify primary spend areas and opportunities for category management.",
+      "chart_type": "Pie Chart",
+      "x_axis": "Item Category (Categorical)",
+      "y_axis": "Spend Amount ($)"
+    },
+    {
+      "chart_name": "Spend by Top Suppliers",
+      "procurement_optimization_purpose": "Identify key suppliers by total spend to prioritize supplier relationship management efforts and leverage volume for better terms.",
+      "chart_type": "Bar Chart",
+      "x_axis": "Supplier Name",
+      "y_axis": "Spend Amount ($)"
+    },
+    {
+      "chart_name": "Monthly Spend Trend",
+      "procurement_optimization_purpose": "Monitor spend patterns over time to identify seasonality, forecast demand, and track overall expenditure against budget.",
+      "chart_type": "Line Chart",
+      "x_axis": "Month-Year (Order Date)",
+      "y_axis": "Spend Amount ($)"
+    }
+  ]
+}
